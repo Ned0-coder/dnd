@@ -2,6 +2,7 @@ import streamlit as st
 from typing import List, Dict, Optional
 from datetime import datetime
 import time
+from collections import Counter
 
 # ========== КОНФИГУРАЦИЯ ==========
 HOST_PASSWORD = "IamDM"  # Секретный пароль
@@ -51,7 +52,7 @@ SPELLS_DB = [
     {"id": 20, "name": "Пожирающая туча", "level": 4},
 ]
 
-# ========== ГЛОБАЛЬНЫЕ ДАННЫЕ ДЛЯ ВСЕХ ПОЛЬЗОВАТЕЛЕЙ ==========
+# ========== ГЛОБАЛЬНЫЕ ДАННЫХ ДЛЯ ВСЕХ ПОЛЬЗОВАТЕЛЕЙ ==========
 @st.cache_resource(ttl=60)
 def get_shared_data():
     """Создает общие данные для ВСЕХ пользователей"""
@@ -115,68 +116,70 @@ def create_element_display(elements: List[str]) -> str:
 
 def check_guessed_elements(player_guesses: List[str], actual_elements: List[str]) -> List[str]:
     """
-    Улучшенная проверка угаданных элементов:
-    - Проверяет только одинаковые элементы
-    - Огонь+Огонь+Земля = Огонь+Огонь+Земля (полное совпадение)
-    - Огонь+Лед+Огонь = откроет два Огня из Огонь+Огонь+Земля
-    - Порядок важен только для проверки по позициям
+    Упрощенная логика проверки:
+    - Считаем общее количество каждого элемента у игрока
+    - Если количество <= количеству в правильной комбинации - открываем все такие элементы
+    - Пример: 
+        Правильно: 🔥+🔥+🌍
+        Игрок: 🔥+❄️+🔥 → откроет оба 🔥
     """
     guessed = []
     
-    # Создаем копии для работы
-    player_copy = player_guesses.copy()
-    actual_copy = actual_elements.copy()
+    # Получаем элементы, которые еще не угаданы
+    elements_to_check = actual_elements.copy()
     
-    # Сначала проверяем полные совпадения по позициям
-    for i in range(min(len(player_copy), len(actual_copy))):
-        if player_copy[i] == actual_copy[i]:
-            guessed.append(player_copy[i])
-            # Помечаем как проверенные
-            player_copy[i] = None
-            actual_copy[i] = None
-    
-    # Затем проверяем оставшиеся элементы (не по позициям)
-    for i in range(len(player_copy)):
-        if player_copy[i] is not None and player_copy[i] in actual_copy:
-            # Находим индекс этого элемента в actual_copy
-            for j in range(len(actual_copy)):
-                if actual_copy[j] == player_copy[i]:
-                    guessed.append(player_copy[i])
-                    actual_copy[j] = None  # Помечаем как использованный
-                    break
+    # Для каждого элемента, который ввел игрок
+    for element in player_guesses:
+        # Считаем сколько раз этот элемент в правильной комбинации
+        correct_count = elements_to_check.count(element)
+        # Считаем сколько раз игрок ввел этот элемент
+        player_count = player_guesses.count(element)
+        
+        # Если игрок угадал достаточно этого элемента
+        if player_count <= correct_count and element not in guessed:
+            # Добавляем этот элемент столько раз, сколько игрок его ввел
+            for _ in range(min(player_count, correct_count)):
+                guessed.append(element)
     
     return guessed
 
-def get_or_create_game_block(spell_name: str, level: int, user_name: str = "Система") -> Optional[Dict]:
-    """Получает существующий игровой блок или создает новый"""
+def get_or_create_game_block(spell_name: str, level: int, user_name: str = "Система") -> Dict:
+    """Создает игровой блок. Всегда создает новый или возвращает существующий"""
+    # Ищем существующий блок
     existing_block = next((b for b in shared_data["game_blocks"] 
                          if b['spell_name'] == spell_name), None)
     
     if existing_block:
         return existing_block
     
+    # Получаем комбинацию
     spell_combo = shared_data["spell_combinations"].get(spell_name)
     
-    if spell_combo:
-        new_block = {
-            "id": shared_data["last_block_id"] + 1,
-            "spell_name": spell_name,
-            "level": level,
-            "combination": create_element_display(spell_combo['elements']),
-            "elements": spell_combo['elements'],
-            "guessed": [],
-            "attempts": 0,
-            "max_attempts": 1,
-            "is_active": True,
-            "created_by": user_name,
-            "created_at": datetime.now().strftime("%H:%M:%S"),
-            "last_played": None
+    if not spell_combo:
+        # Создаем пустой блок (будет заполнен позже)
+        spell_combo = {
+            "combination": "?",
+            "elements": ["?"] * level
         }
-        shared_data["last_block_id"] += 1
-        shared_data["game_blocks"].append(new_block)
-        return new_block
     
-    return None
+    # Создаем новый блок
+    new_block = {
+        "id": shared_data["last_block_id"] + 1,
+        "spell_name": spell_name,
+        "level": level,
+        "combination": create_element_display(spell_combo['elements']),
+        "elements": spell_combo['elements'],
+        "guessed": [],
+        "attempts": 0,
+        "max_attempts": 1,
+        "is_active": True,
+        "created_by": user_name,
+        "created_at": datetime.now().strftime("%H:%M:%S"),
+        "last_played": None
+    }
+    shared_data["last_block_id"] += 1
+    shared_data["game_blocks"].append(new_block)
+    return new_block
 
 def create_repeat_request(spell_name: str, level: int, user_name: str, user_id: str):
     """Создает запрос на повторную попытку"""
@@ -223,8 +226,7 @@ def registration_interface():
         
         if st.button("🎮 **Войти как Игрок**", 
                     use_container_width=True, 
-                    type="primary",
-                    help="Начать игру в роли игрока"):
+                    type="primary"):
             if player_name:
                 st.session_state.user_name = player_name
                 st.session_state.user_type = "player"
@@ -241,8 +243,7 @@ def registration_interface():
         host_password = st.text_input("Секретный пароль", type="password", key="reg_host_pass")
         
         if st.button("👑 **Войти как Мастер**", 
-                    use_container_width=True,
-                    help="Войти в режим мастера"):
+                    use_container_width=True):
             if host_name and host_password:
                 if host_password == HOST_PASSWORD:
                     st.session_state.user_name = host_name
@@ -263,8 +264,8 @@ def registration_interface():
     **🎮 Для Игроков:**
     1. Введите имя персонажа
     2. Выберите заклинание
-    3. Отправьте запрос Мастеру
-    4. Угадывайте комбинации элементов
+    3. Начните игру или запросите комбинацию
+    4. Угадывайте элементы
     
     **👑 Для Мастера:**
     1. Войдите с секретным паролем
@@ -349,27 +350,9 @@ def host_interface():
                     if existing_combo:
                         st.success(f"✅ Комбинация существует: {create_element_display(existing_combo['elements'])}")
                         
-                        existing_block = next((b for b in shared_data["game_blocks"] 
-                                             if b['spell_name'] == req['spell_name']), None)
-                        
-                        if existing_block:
-                            st.info(f"🎮 Игровой блок уже создан")
-                            
-                            if req['type'] == 'повтор':
-                                if st.button("✅ Разрешить повторную попытку", key=f"allow_repeat_{req['id']}", use_container_width=True):
-                                    existing_block['attempts'] = 0
-                                    req['status'] = 'обработан'
-                                    st.success(f"Повторная попытка разрешена для {req['spell_name']}")
-                                    st.rerun()
-                            else:
-                                if st.button("🎮 Обновить игру", key=f"update_game_{req['id']}", use_container_width=True):
-                                    req['status'] = 'обработан'
-                                    st.rerun()
-                        else:
-                            if st.button("🎮 Создать игру", key=f"create_new_{req['id']}", use_container_width=True):
-                                get_or_create_game_block(req['spell_name'], req['level'], req['user_name'])
-                                req['status'] = 'обработан'
-                                st.rerun()
+                        if st.button("✅ Отметить как обработанный", key=f"process_{req['id']}", use_container_width=True):
+                            req['status'] = 'обработан'
+                            st.rerun()
                     else:
                         st.warning("❌ Комбинация не найдена")
                         
@@ -398,9 +381,16 @@ def host_interface():
                                     "elements": new_combo
                                 }
                                 
-                                # НЕ создаем игру автоматически
-                                st.success(f"✅ Комбинация сохранена!")
-                                st.info("Игрок может теперь играть")
+                                # Обновляем существующий блок или создаем новый
+                                existing_block = next((b for b in shared_data["game_blocks"] 
+                                                     if b['spell_name'] == req['spell_name']), None)
+                                if existing_block:
+                                    existing_block['combination'] = create_element_display(new_combo)
+                                    existing_block['elements'] = new_combo
+                                else:
+                                    get_or_create_game_block(req['spell_name'], req['level'], req['user_name'])
+                                
+                                req['status'] = 'обработан'
                                 st.rerun()
                         
                         with col_reject:
@@ -431,9 +421,6 @@ def host_interface():
                         st.write(f"**Создал:** {block['created_by']}")
                     else:
                         st.warning("⚠️ Игровой блок не создан")
-                        if st.button("🎮 Создать игровой блок", key=f"create_block_{spell_name}", use_container_width=True):
-                            get_or_create_game_block(spell_name, len(combo_data['elements']), "Мастер")
-                            st.rerun()
                     
                     st.write("**Редактировать комбинацию:**")
                     
@@ -469,17 +456,19 @@ def host_interface():
                             st.rerun()
                     
                     with col2:
-                        if st.button("🔄 Сбросить попытки", key=f"reset_attempts_{spell_name}", use_container_width=True):
+                        if st.button("🔄 Сбросить прогресс", key=f"reset_{spell_name}", use_container_width=True):
                             if block:
                                 block['attempts'] = 0
                                 block['guessed'] = []
                             st.rerun()
                     
                     with col3:
-                        if st.button("🗑️ Удалить", key=f"delete_{spell_name}", use_container_width=True):
+                        if st.button("🗑️ Удалить всё", key=f"delete_{spell_name}", use_container_width=True):
                             del shared_data["spell_combinations"][spell_name]
                             shared_data["game_blocks"] = [b for b in shared_data["game_blocks"] 
                                                           if b['spell_name'] != spell_name]
+                            shared_data["client_requests"] = [r for r in shared_data["client_requests"] 
+                                                            if r['spell_name'] != spell_name]
                             st.rerun()
 
 def display_client_table_for_host():
@@ -550,12 +539,16 @@ def player_interface():
     
     st.title(f"🎮 Игрок: {st.session_state.user_name}")
     
+    # Проверяем, есть ли активная игра
     if st.session_state.current_game:
         game_block = next((b for b in shared_data["game_blocks"] 
                          if b['spell_name'] == st.session_state.current_game), None)
         if game_block:
             play_spell_game(game_block)
             return
+        else:
+            # Если блока нет, сбрасываем текущую игру
+            st.session_state.current_game = None
     
     # Основной интерфейс
     col_search, col_games = st.columns([1, 2])
@@ -601,18 +594,9 @@ def player_interface():
                             help="Игра недоступна или попытка использована",
                             key="btn_play_disabled")
                 
-                # Кнопка 2: Запросить игру
+                # Кнопка 2: Запросить комбинацию
                 spell_combo = shared_data["spell_combinations"].get(spell['name'])
-                if not existing_block and spell_combo and not existing_request:
-                    if st.button("🎮 **Начать игру**", 
-                               use_container_width=True,
-                               type="primary",
-                               key="btn_start"):
-                        # Создаем игровой блок автоматически
-                        get_or_create_game_block(spell['name'], spell['level'], st.session_state.user_name)
-                        st.session_state.current_game = spell['name']
-                        st.rerun()
-                elif not existing_block and not spell_combo and not existing_request:
+                if not spell_combo and not existing_request:
                     if st.button("📤 **Запросить комбинацию**", 
                                use_container_width=True,
                                type="secondary",
@@ -628,7 +612,18 @@ def player_interface():
                             help="Комбинация уже есть или запрос ожидает",
                             key="btn_request_disabled")
                 
-                # Кнопка 3: Запросить повтор
+                # Кнопка 3: Начать игру (если есть комбинация)
+                if spell_combo and (not existing_block or existing_block['attempts'] < existing_block['max_attempts']):
+                    if st.button("🎮 **Начать игру**", 
+                               use_container_width=True,
+                               type="primary",
+                               key="btn_start"):
+                        # Создаем или получаем блок
+                        block = get_or_create_game_block(spell['name'], spell['level'], st.session_state.user_name)
+                        st.session_state.current_game = spell['name']
+                        st.rerun()
+                
+                # Кнопка 4: Запросить повтор
                 if existing_block and existing_block['attempts'] >= existing_block['max_attempts']:
                     if not existing_request or existing_request['type'] != 'повтор':
                         if st.button("🔄 **Запросить новую попытку**", 
@@ -651,7 +646,7 @@ def player_interface():
                             help="Попытка еще не использована",
                             key="btn_repeat_disabled2")
                 
-                # Кнопка 4: Посмотреть прогресс
+                # Кнопка 5: Посмотреть прогресс
                 if existing_block:
                     if st.button("👁️ **Посмотреть прогресс**", 
                                use_container_width=True,
@@ -849,16 +844,22 @@ def play_spell_game(block: Dict):
         # Определяем, какие элементы нужно проверить (еще не угаданные)
         actual_elements_to_check = block['elements'][len(block['guessed']):]
         
-        # Используем улучшенную логику проверки
+        # Используем упрощенную логику проверки
         new_guessed = check_guessed_elements(selected_elements, actual_elements_to_check)
         
         if new_guessed:
-            block['guessed'].extend(new_guessed)
-            st.success(f"✅ Угадано {len(new_guessed)} элементов!")
+            # Добавляем угаданные элементы
+            for element in new_guessed:
+                if element not in block['guessed']:
+                    # Добавляем элемент столько раз, сколько его в правильной комбинации
+                    element_count_in_actual = actual_elements_to_check.count(element)
+                    element_count_in_new = new_guessed.count(element)
+                    
+                    for _ in range(min(element_count_in_new, element_count_in_actual)):
+                        if len(block['guessed']) < block['level']:
+                            block['guessed'].append(element)
             
-            # Проверяем примеры
-            if new_guessed:
-                st.info(f"Пример работы: Если DM создал 🔥+🔥+🌍, а вы ввели 🔥+❄️+🔥, то угаданы оба 🔥")
+            st.success(f"✅ Угадано {len(new_guessed)} элементов!")
             
             if len(block['guessed']) == block['level']:
                 st.balloons()
