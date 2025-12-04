@@ -52,7 +52,7 @@ SPELLS_DB = [
 ]
 
 # ========== ГЛОБАЛЬНЫЕ ДАННЫЕ ДЛЯ ВСЕХ ПОЛЬЗОВАТЕЛЕЙ ==========
-@st.cache_resource(ttl=60)
+@st.cache_resource(ttl=600)
 def get_shared_data():
     """Создает общие данные для ВСЕХ пользователей"""
     return {
@@ -923,3 +923,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
