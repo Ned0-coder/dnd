@@ -220,7 +220,6 @@ def registration_interface():
     
     with col2:
         st.markdown("### 👑 Стать Мастером")
-        st.info("**Секретный пароль:** `IamDM`")
         host_name = st.text_input("Введите имя Мастера", key="reg_host_name")
         host_password = st.text_input("Пароль", type="password", key="reg_host_pass")
         
@@ -872,3 +871,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
